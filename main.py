@@ -3,34 +3,41 @@ import os
 import random
 
 from kivy.app import App
+from kivy.core.audio import SoundLoader
 from kivy.core.window import Window
-from kivy.graphics import Color, RoundedRectangle
+from kivy.graphics import Color, RoundedRectangle, Rectangle
+from kivy.metrics import dp
+from kivy.uix.anchorlayout import AnchorLayout
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.gridlayout import GridLayout
-from kivy.uix.scrollview import ScrollView
 from kivy.uix.label import Label
 from kivy.uix.button import Button
 from kivy.uix.popup import Popup
-from kivy.uix.textinput import TextInput
+from kivy.uix.scrollview import ScrollView
 from kivy.uix.switch import Switch
+from kivy.uix.textinput import TextInput
 
 
-SAVE_FILE = "new_life_v6_save.json"
-GRAVE_FILE = "new_life_v6_graveyard.json"
-SETTINGS_FILE = "new_life_v6_settings.json"
+SAVE_FILE = "new_life_v7_save.json"
+GRAVE_FILE = "new_life_v7_graveyard.json"
+SETTINGS_FILE = "new_life_v7_settings.json"
 
-Window.clearcolor = (0.94, 0.96, 1.0, 1)
+Window.clearcolor = (0.93, 0.96, 1.0, 1)
 
 
-class Card(BoxLayout):
+def clamp(value, low=0, high=100):
+    return max(low, min(high, value))
+
+
+class RoundedPanel(BoxLayout):
     def __init__(self, bg=(1, 1, 1, 1), radius=22, **kwargs):
         super().__init__(**kwargs)
         self.bg = bg
         self.radius = radius
         with self.canvas.before:
             Color(*self.bg)
-            self.rect = RoundedRectangle(radius=[self.radius])
+            self.rect = RoundedRectangle(radius=[dp(self.radius)])
         self.bind(pos=self._update_rect, size=self._update_rect)
 
     def _update_rect(self, *args):
@@ -38,29 +45,85 @@ class Card(BoxLayout):
         self.rect.size = self.size
 
 
+class RoundedButton(Button):
+    def __init__(self, bg=(0.2, 0.45, 0.9, 1), radius=18, **kwargs):
+        kwargs.setdefault("background_normal", "")
+        kwargs.setdefault("background_down", "")
+        kwargs.setdefault("background_color", (0, 0, 0, 0))
+        kwargs.setdefault("color", (1, 1, 1, 1))
+        kwargs.setdefault("bold", True)
+        kwargs.setdefault("font_size", dp(15))
+        super().__init__(**kwargs)
+        self.bg = bg
+        self.radius = radius
+        with self.canvas.before:
+            Color(*self.bg)
+            self.rect = RoundedRectangle(radius=[dp(self.radius)])
+        self.bind(pos=self._update_rect, size=self._update_rect)
+
+    def _update_rect(self, *args):
+        self.rect.pos = self.pos
+        self.rect.size = self.size
+
+
+class StatBar(BoxLayout):
+    def __init__(self, title, value, max_value=100, accent=(0.2, 0.55, 0.95, 1), **kwargs):
+        super().__init__(orientation="vertical", spacing=dp(4), size_hint_y=None, height=dp(42), **kwargs)
+        self.value = clamp(value, 0, max_value)
+        self.max_value = max_value
+        self.accent = accent
+        label = Label(
+            text=f"{title}: {int(value)}/{max_value}",
+            color=(0.08, 0.12, 0.22, 1),
+            bold=True,
+            font_size=dp(12),
+            halign="left",
+            valign="middle",
+            size_hint_y=None,
+            height=dp(20),
+        )
+        label.bind(size=label.setter("text_size"))
+        self.add_widget(label)
+
+        self.track = FloatLayout(size_hint_y=None, height=dp(8))
+        with self.track.canvas.before:
+            Color(0.86, 0.90, 0.96, 1)
+            self.back = RoundedRectangle(radius=[dp(5)])
+            Color(*accent)
+            self.front = RoundedRectangle(radius=[dp(5)])
+        self.track.bind(pos=self._update, size=self._update)
+        self.add_widget(self.track)
+
+    def _update(self, *args):
+        self.back.pos = self.track.pos
+        self.back.size = self.track.size
+        ratio = clamp(self.value / self.max_value, 0, 1)
+        self.front.pos = self.track.pos
+        self.front.size = (max(dp(4), self.track.width * ratio), self.track.height)
+
+
 class LifeGame(BoxLayout):
     def __init__(self, **kwargs):
-        super().__init__(orientation="vertical", padding=12, spacing=10, **kwargs)
+        super().__init__(orientation="vertical", **kwargs)
+        self.bg_music = None
+        self.active_category = "Жизнь"
         self.reset_values()
         self.load_settings()
         self.load_game()
+        self.start_music()
         self.show_main_menu()
 
-    # -----------------------
-    # Core data
-    # -----------------------
+    # ---------- base data ----------
 
     def reset_values(self):
         self.name = "Игрок"
         self.gender = "Не выбран"
         self.country = "Россия"
         self.city = "Обычный город"
-
         self.age = 0
         self.day = 1
         self.level = 1
         self.xp = 0
-
         self.money = 0
         self.health = 100
         self.happiness = 75
@@ -71,40 +134,35 @@ class LifeGame(BoxLayout):
         self.discipline = 0
         self.luck = 1
         self.fame = 0
-
         self.family_status = "Обычная семья"
         self.education = "Нет"
         self.school_progress = 0
         self.university_progress = 0
-
         self.job = "Нет"
         self.job_level = 0
         self.job_salary = 0
         self.business_level = 0
-
         self.relationship = "Одинок"
         self.partner_name = ""
         self.love = 0
         self.child_count = 0
         self.pet = "Нет"
-
         self.home = "Нет"
         self.home_level = 0
         self.car = "Нет"
         self.car_level = 0
-
         self.disease = "Нет"
         self.immortal = False
         self.game_over = False
         self.death_reason = ""
-
         self.achievements = []
         self.completed_goals = 0
         self.streak = 0
-        self.last_event = "Начни новую жизнь или продолжи сохранение."
+        self.last_event = "Ты родился. Начинается новая жизнь."
 
     def load_settings(self):
         self.settings = {
+            "music": True,
             "sound": True,
             "vibration": True,
             "cloud_sync": False,
@@ -114,8 +172,7 @@ class LifeGame(BoxLayout):
         if os.path.exists(SETTINGS_FILE):
             try:
                 with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                self.settings.update(data)
+                    self.settings.update(json.load(f))
             except Exception:
                 pass
 
@@ -126,111 +183,122 @@ class LifeGame(BoxLayout):
         except Exception:
             pass
 
-    # -----------------------
-    # UI helpers
-    # -----------------------
+    def start_music(self):
+        if not self.settings.get("music", True):
+            self.stop_music()
+            return
+        if self.bg_music:
+            return
+        path = os.path.join(os.path.dirname(__file__), "assets", "bg_music.wav")
+        if os.path.exists(path):
+            self.bg_music = SoundLoader.load(path)
+            if self.bg_music:
+                self.bg_music.loop = True
+                self.bg_music.volume = 0.22
+                self.bg_music.play()
 
-    def clear(self):
+    def stop_music(self):
+        if self.bg_music:
+            try:
+                self.bg_music.stop()
+            except Exception:
+                pass
+            self.bg_music = None
+
+    # ---------- UI helpers ----------
+
+    def wipe(self):
         self.clear_widgets()
 
-    def make_label(self, text, size=16, bold=False, color=(0.08, 0.12, 0.22, 1), height=None, align="center"):
-        label = Label(
+    def label(self, text, size=14, bold=False, color=(0.08, 0.12, 0.22, 1), height=None, align="center"):
+        lbl = Label(
             text=text,
-            font_size=size,
+            font_size=dp(size),
             bold=bold,
             color=color,
             halign=align,
             valign="middle",
-            size_hint_y=None if height else 1,
-            height=height if height else 40,
-            markup=True
+            markup=True,
+            size_hint_y=None if height is not None else 1,
+            height=dp(height) if height is not None else dp(32),
         )
-        label.bind(size=label.setter("text_size"))
-        return label
+        lbl.bind(size=lbl.setter("text_size"))
+        return lbl
 
-    def make_button(self, text, action, bg=(0.25, 0.46, 0.90, 1), height=62, size=18):
-        btn = Button(
+    def btn(self, text, action, bg=(0.2, 0.45, 0.9, 1), height=56, size=15, radius=18):
+        b = RoundedButton(
             text=text,
-            font_size=size,
-            bold=True,
+            bg=bg,
+            radius=radius,
             size_hint_y=None,
-            height=height,
-            background_normal="",
-            background_color=bg,
-            color=(1, 1, 1, 1)
+            height=dp(height),
+            font_size=dp(size),
         )
-        btn.bind(on_press=action)
-        return btn
+        b.bind(on_press=action)
+        return b
 
-    def make_chip(self, text, bg=(1, 1, 1, 1), color=(0.08, 0.12, 0.22, 1)):
-        chip = Card(orientation="vertical", padding=8, bg=bg, radius=18, size_hint_y=None, height=48)
-        chip.add_widget(self.make_label(text, size=14, bold=True, color=color, height=32))
-        return chip
+    def card(self, **kwargs):
+        return RoundedPanel(**kwargs)
 
-    def make_stat_bar(self, title, value, max_value=100, accent=(0.20, 0.55, 0.95, 1)):
-        box = BoxLayout(orientation="vertical", spacing=4, size_hint_y=None, height=54)
-        box.add_widget(self.make_label(f"{title}: {value}/{max_value}", size=14, bold=True, align="left", height=24))
-        bg = FloatLayout(size_hint_y=None, height=10)
-        with bg.canvas.before:
-            Color(0.88, 0.91, 0.96, 1)
-            bg.back = RoundedRectangle(radius=[8])
-            Color(*accent)
-            bg.front = RoundedRectangle(radius=[8])
-        def update_rect(*args):
-            bg.back.pos = bg.pos
-            bg.back.size = bg.size
-            width = max(2, bg.width * max(0, min(value / max_value, 1)))
-            bg.front.pos = bg.pos
-            bg.front.size = (width, bg.height)
-        bg.bind(pos=update_rect, size=update_rect)
-        box.add_widget(bg)
+    def chip(self, text, bg=(1, 1, 1, 1), fg=(0.08, 0.12, 0.22, 1), h=42):
+        p = self.card(orientation="vertical", padding=dp(6), bg=bg, radius=18, size_hint_y=None, height=dp(h))
+        p.add_widget(self.label(text, size=12, bold=True, color=fg, height=h-10))
+        return p
+
+    def section_title(self, title, subtitle=""):
+        box = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(70), spacing=dp(2))
+        box.add_widget(self.label(title, size=28, bold=True, height=38))
+        if subtitle:
+            box.add_widget(self.label(subtitle, size=13, color=(0.38, 0.44, 0.58, 1), height=26))
         return box
 
-    # -----------------------
-    # Main menu
-    # -----------------------
+    # ---------- main menu ----------
 
     def show_main_menu(self, *args):
-        self.clear()
-        Window.clearcolor = (0.94, 0.96, 1.0, 1)
+        self.wipe()
+        Window.clearcolor = (0.93, 0.96, 1.0, 1)
 
-        self.add_widget(self.make_label("НОВАЯ ЖИЗНЬ", size=32, bold=True, height=58))
-        self.add_widget(self.make_label("Твоя история начинается сейчас", size=16, color=(0.35, 0.42, 0.58, 1), height=34))
+        root = AnchorLayout(anchor_x="center", anchor_y="center", padding=dp(12))
+        scroll = ScrollView(size_hint=(1, 1))
+        content = BoxLayout(
+            orientation="vertical",
+            spacing=dp(12),
+            size_hint_y=None,
+            padding=[dp(8), dp(24), dp(8), dp(24)]
+        )
+        content.bind(minimum_height=content.setter("height"))
 
-        hero = Card(orientation="vertical", padding=18, spacing=8, bg=(1, 1, 1, 1), radius=26, size_hint_y=None, height=210)
-        hero.add_widget(self.make_label("Симулятор жизни", size=24, bold=True, height=40))
-        hero.add_widget(self.make_label(
+        content.add_widget(self.section_title("НОВАЯ ЖИЗНЬ", "Твоя история начинается сейчас"))
+
+        hero = self.card(orientation="vertical", padding=dp(16), spacing=dp(8), bg=(1, 1, 1, 1), radius=28, size_hint_y=None, height=dp(210))
+        hero.add_widget(self.label("Симулятор жизни", size=21, bold=True, height=32))
+        hero.add_widget(self.label(
             "Проживи жизнь от рождения до старости.\nУчись, работай, заводи семью, покупай имущество\nи попробуй достичь бессмертия.",
-            size=15,
-            color=(0.28, 0.34, 0.48, 1),
-            height=90
+            size=13,
+            color=(0.32, 0.38, 0.52, 1),
+            height=88
         ))
 
-        chips = GridLayout(cols=3, spacing=8, size_hint_y=None, height=52)
-        chips.add_widget(self.make_chip(f"Жизней: {len(self.load_graveyard())}", bg=(0.95, 0.98, 1, 1)))
-        chips.add_widget(self.make_chip(f"Уровень: {self.level}", bg=(0.96, 0.94, 1, 1)))
-        chips.add_widget(self.make_chip(f"День: {self.day}", bg=(0.95, 1, 0.96, 1)))
-        hero.add_widget(chips)
-        self.add_widget(hero)
-
-        menu = GridLayout(cols=1, spacing=10, size_hint_y=None)
-        menu.bind(minimum_height=menu.setter("height"))
+        stats = GridLayout(cols=3, spacing=dp(8), size_hint_y=None, height=dp(52))
+        stats.add_widget(self.chip(f"Жизней: {len(self.load_graveyard())}", bg=(0.95, 0.98, 1, 1)))
+        stats.add_widget(self.chip(f"Уровень: {self.level}", bg=(0.97, 0.95, 1, 1)))
+        stats.add_widget(self.chip(f"День: {self.day}", bg=(0.94, 1, 0.96, 1)))
+        hero.add_widget(stats)
+        content.add_widget(hero)
 
         has_save = os.path.exists(SAVE_FILE)
-        continue_color = (0.12, 0.55, 0.33, 1) if has_save else (0.55, 0.58, 0.65, 1)
+        menu = BoxLayout(orientation="vertical", spacing=dp(10), size_hint_y=None, height=dp(350))
+        menu.add_widget(self.btn("▶  Продолжить игру", self.continue_game, (0.10, 0.62, 0.36, 1) if has_save else (0.62, 0.65, 0.72, 1), height=60))
+        menu.add_widget(self.btn("✨  Новая игра", self.new_game_popup, (0.20, 0.45, 0.92, 1), height=60))
+        menu.add_widget(self.btn("🪦  Ваши игры", self.show_graveyard_menu, (0.46, 0.34, 0.82, 1), height=60))
+        menu.add_widget(self.btn("⚙  Настройки", self.show_settings, (0.18, 0.23, 0.35, 1), height=60))
+        menu.add_widget(self.btn("⏻  Выйти из игры", self.exit_game, (0.75, 0.22, 0.26, 1), height=60))
+        content.add_widget(menu)
+        content.add_widget(self.label("v7.0 APK", size=12, color=(0.48, 0.54, 0.66, 1), height=24))
 
-        menu.add_widget(self.make_button("Продолжить игру", self.continue_game, continue_color, height=64))
-        menu.add_widget(self.make_button("Новая игра", self.new_game_popup, (0.22, 0.45, 0.90, 1), height=64))
-        menu.add_widget(self.make_button("Ваши игры", self.show_graveyard_menu, (0.45, 0.38, 0.78, 1), height=64))
-        menu.add_widget(self.make_button("Настройки", self.show_settings, (0.25, 0.31, 0.45, 1), height=64))
-        menu.add_widget(self.make_button("Выйти из игры", self.exit_game, (0.70, 0.22, 0.25, 1), height=64))
-
-        scroll = ScrollView()
-        scroll.add_widget(menu)
-        self.add_widget(scroll)
-
-        footer = self.make_label("v6.0 APK • debug build", size=13, color=(0.45, 0.50, 0.62, 1), height=28)
-        self.add_widget(footer)
+        scroll.add_widget(content)
+        root.add_widget(scroll)
+        self.add_widget(root)
 
     def continue_game(self, *args):
         if not os.path.exists(SAVE_FILE):
@@ -240,275 +308,192 @@ class LifeGame(BoxLayout):
         self.build_game_ui("Продолжаем жизнь персонажа.")
 
     def exit_game(self, *args):
+        self.stop_music()
         App.get_running_app().stop()
 
-    # -----------------------
-    # Game UI
-    # -----------------------
+    # ---------- gameplay screen ----------
 
     def build_game_ui(self, message=""):
-        self.clear()
+        self.wipe()
         self.check_limits()
         self.check_level()
         self.check_achievements()
+        if message:
+            self.last_event = message
 
-        header = BoxLayout(orientation="horizontal", spacing=8, size_hint_y=None, height=54)
-        header.add_widget(self.make_button("Меню", self.show_main_menu, (0.90, 0.92, 0.98, 1), height=48, size=15))
-        title = self.make_label("НОВАЯ ЖИЗНЬ", size=24, bold=True, height=48)
-        header.add_widget(title)
-        header.add_widget(self.make_button("Магазин", self.menu_shop, (0.50, 0.38, 0.90, 1), height=48, size=15))
-        self.add_widget(header)
+        root = BoxLayout(orientation="vertical", padding=dp(8), spacing=dp(8))
 
-        chips = GridLayout(cols=4, spacing=8, size_hint_y=None, height=54)
-        chips.add_widget(self.make_chip(f"День {self.day}", bg=(1, 1, 1, 1)))
-        chips.add_widget(self.make_chip(f"{self.money} ₽", bg=(0.92, 1.0, 0.95, 1), color=(0.05, 0.42, 0.20, 1)))
-        chips.add_widget(self.make_chip(f"Энергия {self.energy}", bg=(1.0, 0.98, 0.90, 1), color=(0.55, 0.36, 0.02, 1)))
-        chips.add_widget(self.make_chip(f"XP {self.xp}/{self.level * 100}", bg=(0.96, 0.94, 1, 1), color=(0.35, 0.23, 0.80, 1)))
-        self.add_widget(chips)
+        header = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(48))
+        header.add_widget(self.btn("☰", self.show_main_menu, (1, 1, 1, 1), height=44, size=18, radius=16))
+        title_box = BoxLayout(orientation="vertical")
+        title_box.add_widget(self.label("НОВАЯ ЖИЗНЬ", size=21, bold=True, height=28))
+        title_box.add_widget(self.label("Твоя история начинается сейчас", size=11, color=(0.43, 0.48, 0.62, 1), height=18))
+        header.add_widget(title_box)
+        header.add_widget(self.btn("Магазин", self.choose_shop, (0.48, 0.34, 0.90, 1), height=44, size=12, radius=16))
+        root.add_widget(header)
 
-        profile = Card(orientation="vertical", padding=14, spacing=10, bg=(1, 1, 1, 1), radius=26, size_hint_y=None, height=330)
+        scroll = ScrollView()
+        content = BoxLayout(orientation="vertical", spacing=dp(10), size_hint_y=None)
+        content.bind(minimum_height=content.setter("height"))
 
-        top = BoxLayout(orientation="horizontal", spacing=14, size_hint_y=None, height=110)
-        avatar = Card(orientation="vertical", padding=6, bg=(0.87, 0.91, 1, 1), radius=55, size_hint_x=None, width=105)
-        avatar.add_widget(self.make_label(self.name[:1].upper(), size=42, bold=True, height=88, color=(0.22, 0.36, 0.80, 1)))
-        top.add_widget(avatar)
+        top_chips = GridLayout(cols=4, spacing=dp(6), size_hint_y=None, height=dp(46))
+        top_chips.add_widget(self.chip(f"День {self.day}", bg=(1, 1, 1, 1), h=40))
+        top_chips.add_widget(self.chip(f"{self.money} ₽", bg=(0.92, 1.0, 0.95, 1), fg=(0.05, 0.45, 0.20, 1), h=40))
+        top_chips.add_widget(self.chip(f"Энергия {self.energy}", bg=(1.0, 0.98, 0.90, 1), fg=(0.60, 0.40, 0.02, 1), h=40))
+        top_chips.add_widget(self.chip(f"XP {self.xp}/{self.level * 100}", bg=(0.96, 0.94, 1, 1), fg=(0.35, 0.25, 0.80, 1), h=40))
+        content.add_widget(top_chips)
 
-        info = BoxLayout(orientation="vertical", spacing=2)
-        info.add_widget(self.make_label(self.name, size=22, bold=True, align="left", height=30))
-        info.add_widget(self.make_label(f"{self.age} лет | Этап: {self.stage()}", size=15, align="left", color=(0.28, 0.34, 0.48, 1), height=24))
-        info.add_widget(self.make_label(f"{self.country} | {self.city}", size=15, align="left", color=(0.28, 0.34, 0.48, 1), height=24))
-        info.add_widget(self.make_label(f"Семья: {self.family_status}", size=15, align="left", color=(0.28, 0.34, 0.48, 1), height=24))
-        top.add_widget(info)
-        profile.add_widget(top)
+        profile = self.card(orientation="vertical", padding=dp(10), spacing=dp(8), bg=(1, 1, 1, 1), radius=24, size_hint_y=None, height=dp(300))
+        row = BoxLayout(orientation="horizontal", spacing=dp(10), size_hint_y=None, height=dp(88))
+        avatar = self.card(orientation="vertical", padding=dp(4), bg=(0.87, 0.91, 1, 1), radius=44, size_hint_x=None, width=dp(88))
+        avatar.add_widget(self.label(self.name[:1].upper(), size=32, bold=True, height=dp(74), color=(0.22, 0.36, 0.80, 1)))
+        row.add_widget(avatar)
+        info = BoxLayout(orientation="vertical", spacing=dp(0))
+        info.add_widget(self.label(self.name, size=18, bold=True, align="left", height=24))
+        info.add_widget(self.label(f"{self.age} лет | {self.stage()}", size=12, align="left", color=(0.28, 0.34, 0.48, 1), height=20))
+        info.add_widget(self.label(f"{self.country} | {self.city}", size=12, align="left", color=(0.28, 0.34, 0.48, 1), height=20))
+        info.add_widget(self.label(f"Семья: {self.family_status}", size=12, align="left", color=(0.28, 0.34, 0.48, 1), height=20))
+        row.add_widget(info)
+        profile.add_widget(row)
 
-        bars = GridLayout(cols=2, spacing=12, size_hint_y=None, height=124)
-        bars.add_widget(self.make_stat_bar("Здоровье", self.health, 100, (0.10, 0.70, 0.32, 1)))
-        bars.add_widget(self.make_stat_bar("Счастье", self.happiness, 100, (0.95, 0.54, 0.10, 1)))
-        bars.add_widget(self.make_stat_bar("Энергия", self.energy, 100, (0.15, 0.50, 0.95, 1)))
-        bars.add_widget(self.make_stat_bar("Внешность", self.looks, 100, (0.90, 0.26, 0.54, 1)))
+        bars = GridLayout(cols=2, spacing=dp(8), size_hint_y=None, height=dp(96))
+        bars.add_widget(StatBar("Здоровье", self.health, 100, (0.08, 0.68, 0.30, 1)))
+        bars.add_widget(StatBar("Счастье", self.happiness, 100, (0.95, 0.52, 0.10, 1)))
+        bars.add_widget(StatBar("Энергия", self.energy, 100, (0.12, 0.48, 0.95, 1)))
+        bars.add_widget(StatBar("Внешность", self.looks, 100, (0.90, 0.25, 0.55, 1)))
         profile.add_widget(bars)
 
-        small = GridLayout(cols=4, spacing=8, size_hint_y=None, height=62)
-        small.add_widget(self.make_chip(f"Ум\n{self.mind}", bg=(0.93, 0.97, 1, 1)))
-        small.add_widget(self.make_chip(f"Харизма\n{self.charisma}", bg=(1, 0.94, 0.97, 1)))
-        small.add_widget(self.make_chip(f"Дисциплина\n{self.discipline}", bg=(0.95, 0.96, 1, 1)))
-        small.add_widget(self.make_chip(f"Удача\n{self.luck}", bg=(0.94, 1, 0.94, 1)))
-        profile.add_widget(small)
+        stat_chips = GridLayout(cols=4, spacing=dp(6), size_hint_y=None, height=dp(48))
+        stat_chips.add_widget(self.chip(f"Ум\n{self.mind}", bg=(0.93, 0.97, 1, 1), h=44))
+        stat_chips.add_widget(self.chip(f"Харизма\n{self.charisma}", bg=(1, 0.94, 0.97, 1), h=44))
+        stat_chips.add_widget(self.chip(f"Дисциплина\n{self.discipline}", bg=(0.95, 0.96, 1, 1), h=44))
+        stat_chips.add_widget(self.chip(f"Удача\n{self.luck}", bg=(0.94, 1, 0.94, 1), h=44))
+        profile.add_widget(stat_chips)
 
-        bottom = GridLayout(cols=4, spacing=8, size_hint_y=None, height=58)
-        bottom.add_widget(self.make_chip(f"Учёба\n{self.education}", bg=(0.96, 0.97, 1, 1)))
-        bottom.add_widget(self.make_chip(f"Работа\n{self.job}", bg=(0.96, 0.97, 1, 1)))
-        bottom.add_widget(self.make_chip(f"Бизнес\n{self.business_level}", bg=(0.96, 0.97, 1, 1)))
-        bottom.add_widget(self.make_chip(f"Дети\n{self.child_count}", bg=(0.96, 0.97, 1, 1)))
-        profile.add_widget(bottom)
+        stat2 = GridLayout(cols=4, spacing=dp(6), size_hint_y=None, height=dp(48))
+        stat2.add_widget(self.chip(f"Учёба\n{self.education}", bg=(0.96, 0.97, 1, 1), h=44))
+        stat2.add_widget(self.chip(f"Работа\n{self.job}", bg=(0.96, 0.97, 1, 1), h=44))
+        stat2.add_widget(self.chip(f"Бизнес\n{self.business_level}", bg=(0.96, 0.97, 1, 1), h=44))
+        stat2.add_widget(self.chip(f"Дети\n{self.child_count}", bg=(0.96, 0.97, 1, 1), h=44))
+        profile.add_widget(stat2)
+        content.add_widget(profile)
 
-        self.add_widget(profile)
+        event = self.card(orientation="horizontal", padding=dp(12), spacing=dp(8), bg=(0.96, 0.99, 1, 1), radius=22, size_hint_y=None, height=dp(86))
+        event.add_widget(self.label(self.last_event, size=13, bold=True, align="left", height=62, color=(0.09, 0.15, 0.32, 1)))
+        event.add_widget(self.btn(">", self.quick_next_day, (0.20, 0.48, 0.86, 1), height=52, size=18, radius=20))
+        content.add_widget(event)
 
-        event = Card(orientation="horizontal", padding=14, spacing=8, bg=(0.96, 0.99, 1, 1), radius=24, size_hint_y=None, height=96)
-        text = message if message else self.last_event
-        self.last_event = text
-        event.add_widget(self.make_label(text, size=16, bold=True, align="left", color=(0.10, 0.15, 0.30, 1), height=74))
-        event.add_widget(self.make_button(">", self.quick_next_year, (0.20, 0.48, 0.86, 1), height=56, size=24))
-        self.add_widget(event)
-
-        grid = GridLayout(cols=2, spacing=10, size_hint_y=None)
-        grid.bind(minimum_height=grid.setter("height"))
-        tiles = [
-            ("Жизнь\nПовседневные действия", self.menu_life, (0.18, 0.50, 0.95, 1)),
-            ("Учёба\nЗнания и навыки", self.menu_education, (0.40, 0.25, 0.90, 1)),
-            ("Работа\nКарьера и доход", self.menu_work, (0.10, 0.62, 0.32, 1)),
-            ("Отношения\nСемья и любовь", self.menu_relationships, (0.88, 0.25, 0.48, 1)),
-            ("Имущество\nДом и транспорт", self.menu_property, (0.95, 0.56, 0.05, 1)),
-            ("Активы\nБизнес и финансы", self.menu_assets, (0.05, 0.68, 0.80, 1)),
-            ("Здоровье\nЛечение и спорт", self.menu_health, (0.86, 0.23, 0.25, 1)),
-            ("Другое\nКладбище и настройки", self.menu_other, (0.50, 0.30, 0.88, 1)),
+        categories = GridLayout(cols=2, spacing=dp(8), size_hint_y=None, height=dp(220))
+        category_data = [
+            ("Жизнь", "Повседневные действия", (0.18, 0.50, 0.95, 1)),
+            ("Учёба", "Знания и навыки", (0.40, 0.25, 0.90, 1)),
+            ("Работа", "Карьера и доход", (0.10, 0.62, 0.32, 1)),
+            ("Отношения", "Семья и любовь", (0.88, 0.25, 0.48, 1)),
+            ("Имущество", "Дом и транспорт", (0.95, 0.56, 0.05, 1)),
+            ("Активы", "Бизнес и финансы", (0.05, 0.68, 0.80, 1)),
+            ("Здоровье", "Лечение и спорт", (0.86, 0.23, 0.25, 1)),
+            ("Другое", "Кладбище и настройки", (0.50, 0.30, 0.88, 1)),
         ]
-        for title, action, color in tiles:
-            grid.add_widget(self.make_button(title, action, color, height=92, size=17))
+        for name, sub, color in category_data:
+            txt = f"{name}\n[size=11]{sub}[/size]"
+            categories.add_widget(self.btn(txt, lambda b, n=name: self.open_action_sheet(n), color, height=50, size=13, radius=18))
+        content.add_widget(categories)
 
-        scroll = ScrollView()
-        scroll.add_widget(grid)
-        self.add_widget(scroll)
+        content.add_widget(self.quick_actions_panel())
 
-        nav = GridLayout(cols=4, spacing=6, size_hint_y=None, height=52)
-        nav.add_widget(self.make_button("Главная", lambda x: self.build_game_ui(self.last_event), (0.20, 0.48, 0.86, 1), height=48, size=14))
-        nav.add_widget(self.make_button("Дневник", self.show_diary, (0.70, 0.74, 0.82, 1), height=48, size=14))
-        nav.add_widget(self.make_button("Цели", self.show_goals, (0.70, 0.74, 0.82, 1), height=48, size=14))
-        nav.add_widget(self.make_button("Магазин", self.menu_shop, (0.70, 0.74, 0.82, 1), height=48, size=14))
-        self.add_widget(nav)
+        scroll.add_widget(content)
+        root.add_widget(scroll)
 
+        nav = GridLayout(cols=4, spacing=dp(4), size_hint_y=None, height=dp(48))
+        nav.add_widget(self.btn("Главная", lambda x: self.build_game_ui(), (0.20, 0.48, 0.86, 1), height=44, size=11, radius=12))
+        nav.add_widget(self.btn("Дневник", self.show_diary, (0.70, 0.74, 0.82, 1), height=44, size=11, radius=12))
+        nav.add_widget(self.btn("Цели", self.show_goals, (0.70, 0.74, 0.82, 1), height=44, size=11, radius=12))
+        nav.add_widget(self.btn("Магазин", self.choose_shop, (0.70, 0.74, 0.82, 1), height=44, size=11, radius=12))
+        root.add_widget(nav)
+
+        self.add_widget(root)
         self.save_game()
 
+    def quick_actions_panel(self):
+        actions = self.get_actions_for(self.active_category)
+        panel = self.card(orientation="vertical", padding=dp(10), spacing=dp(8), bg=(1, 1, 1, 1), radius=24, size_hint_y=None)
+        panel.height = dp(66 + max(1, min(6, len(actions))) * 48)
+        panel.add_widget(self.label(f"Выбор действия: {self.active_category}", size=17, bold=True, align="left", height=30))
+        grid = GridLayout(cols=1, spacing=dp(6), size_hint_y=None, height=dp(max(1, min(6, len(actions))) * 48))
+        for title, fn in actions[:6]:
+            grid.add_widget(self.btn(title, lambda b, f=fn: f(), (0.10, 0.20, 0.36, 1), height=42, size=12, radius=14))
+        panel.add_widget(grid)
+        return panel
+
+    def open_action_sheet(self, category):
+        self.active_category = category
+        # Категория сразу показывает выбор действия на главном экране, без тёмного подменю.
+        self.build_game_ui(f"Выбери действие в разделе «{category}».")
+
+    def get_actions_for(self, category):
+        if category == "Жизнь":
+            if self.age <= 2:
+                return [("Спать и расти", self.act_baby_sleep), ("Играть с родителями", self.act_baby_play), ("Учиться говорить", self.act_baby_talk)]
+            if self.age <= 6:
+                return [("Играть", self.act_child_play), ("Рисовать", self.act_child_draw), ("Развивать речь", self.act_child_speech), ("Спать", self.act_rest)]
+            return [("Отдыхать", self.act_rest), ("Спорт", self.act_sport), ("Друзья", self.act_friends), ("Саморазвитие", self.act_self_development), ("Путешествие", self.act_travel), ("Прожить день", self.quick_next_day)]
+        if category == "Учёба":
+            if self.age < 3:
+                return [("Пока рано учиться", lambda: self.build_game_ui("Ты ещё слишком мал для учёбы."))]
+            if self.age <= 6:
+                return [("Развивать речь", self.act_child_speech), ("Рисовать", self.act_child_draw), ("Учиться считать", self.act_counting)]
+            if self.age <= 17:
+                return [("Ходить в школу", self.act_school), ("Читать книги", self.act_books), ("Готовиться к экзаменам", self.act_exams)]
+            return [("Университет", self.act_university), ("Онлайн-курсы", self.act_courses), ("Проф. книги", self.act_pro_books), ("Квалификация", self.act_qualification)]
+        if category == "Работа":
+            if self.age < 14:
+                return [("Работа позже", lambda: self.build_game_ui("Работа будет доступна позже."))]
+            if self.age < 18:
+                return [("Подработка", self.act_part_time), ("Помощь соседям", self.act_small_help)]
+            return [("Устроиться", self.get_job), ("Работать", self.act_work), ("Повышение", self.ask_promotion), ("Сменить работу", self.change_job), ("Уволиться", self.quit_job), ("Фриланс", self.act_freelance)]
+        if category == "Отношения":
+            if self.age < 14:
+                return [("Отношения позже", lambda: self.build_game_ui("Серьёзные отношения будут доступны позже."))]
+            return [("Знакомиться", self.find_partner), ("Свидание", self.date_partner), ("Время вместе", self.spend_time_partner), ("Брак", self.marry), ("Ребёнок", self.have_child), ("Расстаться", self.divorce)]
+        if category == "Имущество":
+            if self.age < 18:
+                return [("Имущество позже", lambda: self.build_game_ui("Имущество доступно с 18 лет."))]
+            return [("Комната 150к", lambda: self.buy_home("Комната", 1, 150000)), ("Квартира 800к", lambda: self.buy_home("Квартира", 2, 800000)), ("Дом 2.5м", lambda: self.buy_home("Дом", 3, 2500000)), ("Старое авто 120к", lambda: self.buy_car("Старое авто", 1, 120000)), ("Хорошее авто 700к", lambda: self.buy_car("Хорошее авто", 2, 700000)), ("Суперкар 12м", lambda: self.buy_car("Суперкар", 4, 12000000))]
+        if category == "Активы":
+            if self.age < 18:
+                return [("Активы позже", lambda: self.build_game_ui("Активы и бизнес доступны с 18 лет."))]
+            return [(f"Бизнес {(self.business_level + 1) * 250000} ₽", self.upgrade_business), ("Продать бизнес", self.sell_business), ("Инвестировать", self.invest_money), ("Личный бренд", self.promote_fame)]
+        if category == "Здоровье":
+            return [("Врач", self.act_heal), ("Премиум лечение", self.premium_heal), ("Спорт", self.act_sport), ("Отдых", self.act_rest), ("Бессмертие", self.buy_immortality)]
+        return [("Статистика", self.show_stats), ("Достижения", self.show_achievements), ("Ваши игры", self.show_graveyard_menu), ("Настройки", self.show_settings), ("Главное меню", self.show_main_menu)]
+
     def stage(self):
-        if self.immortal:
-            return "Бессмертный"
-        if self.age <= 2:
-            return "Младенец"
-        if self.age <= 6:
-            return "Детство"
-        if self.age <= 13:
-            return "Школа"
-        if self.age <= 17:
-            return "Подросток"
-        if self.age <= 25:
-            return "Молодость"
-        if self.age <= 59:
-            return "Взрослая жизнь"
+        if self.immortal: return "Бессмертный"
+        if self.age <= 2: return "Младенец"
+        if self.age <= 6: return "Детство"
+        if self.age <= 13: return "Школа"
+        if self.age <= 17: return "Подросток"
+        if self.age <= 25: return "Молодость"
+        if self.age <= 59: return "Взрослая жизнь"
         return "Старость"
 
-    # -----------------------
-    # Menus
-    # -----------------------
-
-    def select_menu(self, title, items):
-        layout = BoxLayout(orientation="vertical", padding=16, spacing=10)
-        layout.add_widget(self.make_label(title, size=26, bold=True, align="left", height=50, color=(1, 1, 1, 1)))
-
-        line = Card(bg=(0.18, 0.75, 0.95, 1), size_hint_y=None, height=4)
-        layout.add_widget(line)
-
-        grid = GridLayout(cols=1, spacing=8, size_hint_y=None)
-        grid.bind(minimum_height=grid.setter("height"))
-
-        for text, action in items:
-            btn = self.make_button(text, lambda btn, act=action: self.run_popup_action(act), (0.08, 0.18, 0.33, 1), height=60, size=16)
-            grid.add_widget(btn)
-
-        close = self.make_button("Закрыть", lambda x: self.current_popup.dismiss(), (0.20, 0.20, 0.25, 1), height=60, size=16)
-        grid.add_widget(close)
-
-        scroll = ScrollView()
-        scroll.add_widget(grid)
-        layout.add_widget(scroll)
-
-        popup = Popup(title="", content=layout, size_hint=(0.88, 0.84), background_color=(0.05, 0.06, 0.08, 0.95))
-        self.current_popup = popup
-        popup.open()
-
-    def run_popup_action(self, action):
-        if hasattr(self, "current_popup"):
-            self.current_popup.dismiss()
-        action()
+    # ---------- mechanics ----------
 
     def ensure_alive(self):
         if self.game_over:
-            self.build_game_ui("Жизнь закончена. Начни новую жизнь.")
+            self.build_game_ui("Жизнь закончена. Начни новую игру.")
             return False
         return True
 
-    def menu_life(self, instance=None):
-        if not self.ensure_alive():
-            return
-        if self.age <= 2:
-            items = [("Спать и расти", self.act_baby_sleep), ("Играть с родителями", self.act_baby_play), ("Учиться говорить", self.act_baby_talk)]
-        elif self.age <= 6:
-            items = [("Играть", self.act_child_play), ("Рисовать", self.act_child_draw), ("Развивать речь", self.act_child_speech), ("Спать", self.act_rest)]
-        elif self.age <= 13:
-            items = [("Играть с друзьями", self.act_friends), ("Читать книги", self.act_books), ("Заниматься спортом", self.act_sport), ("Отдыхать", self.act_rest)]
-        elif self.age <= 17:
-            items = [("Гулять с друзьями", self.act_friends), ("Развивать хобби", self.act_hobby), ("Спорт", self.act_sport), ("Отдыхать", self.act_rest)]
-        else:
-            items = [("Отдыхать", self.act_rest), ("Спорт", self.act_sport), ("Саморазвитие", self.act_self_development), ("Путешествие", self.act_travel), ("Прожить день спокойно", self.quick_next_year)]
-        self.select_menu("Жизнь", items)
-
-    def menu_education(self, instance=None):
-        if not self.ensure_alive():
-            return
-        if self.age < 3:
-            self.build_game_ui("Ты ещё слишком мал для учёбы.")
-            return
-        if self.age <= 6:
-            items = [("Развивать речь", self.act_child_speech), ("Рисовать", self.act_child_draw), ("Учиться считать", self.act_counting)]
-        elif self.age <= 17:
-            items = [("Ходить в школу", self.act_school), ("Читать книги", self.act_books), ("Готовиться к экзаменам", self.act_exams)]
-        else:
-            items = [("Поступить в университет", self.act_university), ("Онлайн-курсы", self.act_courses), ("Профессиональные книги", self.act_pro_books), ("Повысить квалификацию", self.act_qualification)]
-        self.select_menu("Учёба", items)
-
-    def menu_work(self, instance=None):
-        if not self.ensure_alive():
-            return
-        if self.age < 14:
-            self.build_game_ui("Работа будет доступна позже.")
-            return
-        if self.age < 18:
-            items = [("Подработка", self.act_part_time), ("Помощь соседям за деньги", self.act_small_help)]
-        else:
-            items = [("Устроиться на работу", self.get_job), ("Работать", self.act_work), ("Просить повышение", self.ask_promotion), ("Сменить профессию", self.change_job), ("Уволиться", self.quit_job), ("Фриланс", self.act_freelance)]
-        self.select_menu("Работа", items)
-
-    def menu_relationships(self, instance=None):
-        if not self.ensure_alive():
-            return
-        if self.age < 14:
-            self.build_game_ui("Серьёзные отношения будут доступны позже.")
-            return
-        items = [("Знакомиться", self.find_partner), ("Сходить на свидание", self.date_partner), ("Провести время вместе", self.spend_time_partner), ("Предложить брак", self.marry), ("Завести ребёнка", self.have_child), ("Расстаться / развестись", self.divorce)]
-        self.select_menu("Отношения", items)
-
-    def menu_property(self, instance=None):
-        if not self.ensure_alive():
-            return
-        if self.age < 18:
-            self.build_game_ui("Имущество доступно с 18 лет.")
-            return
-        items = [
-            ("Купить комнату - 150 000 ₽", lambda: self.buy_home("Комната", 1, 150000)),
-            ("Купить квартиру - 800 000 ₽", lambda: self.buy_home("Квартира", 2, 800000)),
-            ("Купить дом - 2 500 000 ₽", lambda: self.buy_home("Дом", 3, 2500000)),
-            ("Купить особняк - 8 000 000 ₽", lambda: self.buy_home("Особняк", 4, 8000000)),
-            ("Купить виллу - 20 000 000 ₽", lambda: self.buy_home("Вилла", 5, 20000000)),
-            ("Купить старое авто - 120 000 ₽", lambda: self.buy_car("Старое авто", 1, 120000)),
-            ("Купить хорошее авто - 700 000 ₽", lambda: self.buy_car("Хорошее авто", 2, 700000)),
-            ("Купить суперкар - 12 000 000 ₽", lambda: self.buy_car("Суперкар", 4, 12000000)),
-        ]
-        self.select_menu("Имущество", items)
-
-    def menu_assets(self, instance=None):
-        if not self.ensure_alive():
-            return
-        if self.age < 18:
-            self.build_game_ui("Активы и бизнес доступны с 18 лет.")
-            return
-        cost = (self.business_level + 1) * 250000
-        items = [(f"Развить бизнес - {cost} ₽", self.upgrade_business), ("Продать бизнес", self.sell_business), ("Инвестировать - 100 000 ₽", self.invest_money), ("Продвигать личный бренд - 50 000 ₽", self.promote_fame)]
-        self.select_menu("Активы", items)
-
-    def menu_health(self, instance=None):
-        if not self.ensure_alive():
-            return
-        items = [("Посетить врача", self.act_heal), ("Премиум лечение - 100 000 ₽", self.premium_heal), ("Спорт", self.act_sport), ("Отдых", self.act_rest), ("Купить таблетку бессмертия", self.buy_immortality)]
-        self.select_menu("Здоровье", items)
-
-    def menu_other(self, instance=None):
-        items = [("Статистика", self.show_stats), ("Достижения", self.show_achievements), ("Ваши игры", self.show_graveyard_menu), ("Настройки", self.show_settings), ("Главное меню", self.show_main_menu)]
-        self.select_menu("Другое", items)
-
-    def menu_shop(self, instance=None):
-        items = [
-            ("Еда - 500 ₽", lambda: self.buy_shop_item("Еда", 500)),
-            ("Развлечения - 2 000 ₽", lambda: self.buy_shop_item("Развлечения", 2000)),
-            ("Книги - 5 000 ₽", lambda: self.buy_shop_item("Книги", 5000)),
-            ("Курсы - 30 000 ₽", lambda: self.buy_shop_item("Курсы", 30000)),
-            ("Питомец - 20 000 ₽", self.buy_pet),
-            ("Премиум лечение - 100 000 ₽", self.premium_heal),
-            ("Таблетка бессмертия - 10 000 000 ₽", self.buy_immortality),
-        ]
-        self.select_menu("Магазин", items)
-
-    # -----------------------
-    # Gameplay
-    # -----------------------
-
     def check_limits(self):
-        self.health = max(0, min(100, self.health))
-        self.happiness = max(0, min(100, self.happiness))
-        self.energy = max(0, min(100, self.energy))
-        self.looks = max(0, min(100, self.looks))
-        self.money = max(0, self.money)
-        self.fame = max(0, self.fame)
-        self.charisma = max(0, self.charisma)
-        self.discipline = max(0, self.discipline)
+        self.health = clamp(self.health)
+        self.happiness = clamp(self.happiness)
+        self.energy = clamp(self.energy)
+        self.looks = clamp(self.looks)
+        self.money = max(0, int(self.money))
+        self.fame = max(0, int(self.fame))
+        self.charisma = max(0, int(self.charisma))
+        self.discipline = max(0, int(self.discipline))
 
     def add_xp(self, amount):
         self.xp += amount
@@ -526,9 +511,9 @@ class LifeGame(BoxLayout):
         if self.game_over:
             return ""
         self.day += 1
+        self.streak += 1
         if self.day % 12 == 0:
             self.age += 1
-        self.streak += 1
         self.energy -= random.randint(3, 10)
         self.happiness -= random.randint(0, 4)
 
@@ -555,24 +540,25 @@ class LifeGame(BoxLayout):
         self.check_death()
         return event
 
-    def end_action(self, message, xp=0, pass_day=True):
+    def end_action(self, msg, xp=0, pass_day=True):
+        if not self.ensure_alive():
+            return
         if xp:
             self.add_xp(xp)
         event = self.pass_day() if pass_day else ""
-        self.build_game_ui(message + event)
+        self.build_game_ui(msg + event)
 
-    def quick_next_year(self, instance=None):
+    def quick_next_day(self, *args):
         self.end_action("День прошёл спокойно.", 10)
 
     def random_event(self):
-        events = [
+        return random.choice([
             self.event_found_money, self.event_lost_money, self.event_health_problem,
             self.event_new_friend, self.event_bad_period, self.event_skill_growth,
             self.event_family_help, self.event_business_bonus, self.event_scandal,
             self.event_inheritance, self.event_fame, self.event_pet_story,
-            self.event_lucky_work, self.event_tax, self.event_disease_recovery,
-        ]
-        return random.choice(events)()
+            self.event_lucky_work, self.event_tax, self.event_disease_recovery
+        ])()
 
     def event_found_money(self):
         amount = random.randint(1000, 30000); self.money += amount
@@ -657,8 +643,7 @@ class LifeGame(BoxLayout):
         if self.health <= 0:
             self.die("Здоровье упало до нуля.")
         elif self.age >= 80:
-            chance = min(70, (self.age - 79) * 6)
-            if random.randint(1, 100) <= chance:
+            if random.randint(1, 100) <= min(70, (self.age - 79) * 6):
                 self.die("Смерть от старости.")
 
     def die(self, reason):
@@ -667,9 +652,9 @@ class LifeGame(BoxLayout):
         self.game_over = True
         self.death_reason = reason
         self.save_to_graveyard()
-        self.save_game()
 
-    # Actions
+    # ---------- actions ----------
+
     def act_baby_sleep(self): self.health += 5; self.energy += 10; self.end_action("Ты много спал и рос здоровым.", 15)
     def act_baby_play(self): self.happiness += 12; self.charisma += 1; self.end_action("Ты играл с родителями.", 15)
     def act_baby_talk(self): self.mind += 3; self.charisma += 2; self.end_action("Ты учился говорить.", 25)
@@ -878,6 +863,10 @@ class LifeGame(BoxLayout):
         self.money -= cost; self.fame += random.randint(15, 35); self.charisma += 5
         self.end_action("Ты продвинул личный бренд.", 80)
 
+    def choose_shop(self, *args):
+        self.active_category = "Магазин"
+        self.build_game_ui("Выбери покупку в панели действий.")
+
     def buy_shop_item(self, item, price):
         if self.money < price:
             self.build_game_ui("Не хватает денег.")
@@ -889,14 +878,14 @@ class LifeGame(BoxLayout):
         elif item == "Курсы": self.mind += 50; self.discipline += 10; self.add_xp(100)
         self.build_game_ui(f"Покупка: {item}.")
 
-    def buy_pet(self, instance=None):
+    def buy_pet(self, *args):
         if self.pet != "Нет": self.build_game_ui(f"У тебя уже есть питомец: {self.pet}."); return
         cost = 20000
         if self.money < cost: self.build_game_ui(f"Питомец стоит {cost} ₽."); return
         self.money -= cost; self.pet = random.choice(["Кот", "Собака", "Попугай"]); self.happiness += 20
         self.build_game_ui(f"Ты купил питомца: {self.pet}.")
 
-    def buy_immortality(self, instance=None):
+    def buy_immortality(self, *args):
         if self.immortal: self.build_game_ui("Ты уже бессмертен."); return
         ready = self.age >= 45 and self.level >= 35 and self.mind >= 1000 and self.fame >= 700 and self.business_level >= 5 and self.money >= 10000000
         if not ready:
@@ -905,19 +894,17 @@ class LifeGame(BoxLayout):
         self.money -= 10000000; self.immortal = True; self.health = 100; self.energy = 100; self.happiness = 100; self.fame += 100
         self.build_game_ui("Ты купил таблетку бессмертия. Старость больше не опасна.")
 
-    # -----------------------
-    # Popups / stats / graveyard / settings
-    # -----------------------
+    # ---------- popup/stat screens ----------
 
     def popup_message(self, title, text):
-        layout = BoxLayout(orientation="vertical", padding=16, spacing=10)
-        layout.add_widget(self.make_label(text, size=17, height=180))
-        close = self.make_button("Закрыть", lambda x: popup.dismiss(), (0.20, 0.45, 0.90, 1))
+        layout = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(10))
+        layout.add_widget(self.label(text, size=15, height=220))
+        close = self.btn("Закрыть", lambda x: popup.dismiss(), (0.20, 0.45, 0.90, 1))
         layout.add_widget(close)
-        popup = Popup(title=title, content=layout, size_hint=(0.86, 0.45))
+        popup = Popup(title=title, content=layout, size_hint=(0.88, 0.48))
         popup.open()
 
-    def show_stats(self, instance=None):
+    def show_stats(self, *args):
         text = (
             f"Имя: {self.name}\nВозраст: {self.age}\nДень: {self.day}\nСтрана: {self.country}\n"
             f"Деньги: {self.money} ₽\nУровень: {self.level}\nУм: {self.mind}\nХаризма: {self.charisma}\n"
@@ -926,13 +913,13 @@ class LifeGame(BoxLayout):
         )
         self.popup_message("Статистика", text)
 
-    def show_diary(self, instance=None):
+    def show_diary(self, *args):
         self.popup_message("Дневник", f"Последнее событие:\n\n{self.last_event}")
 
-    def show_goals(self, instance=None):
+    def show_goals(self, *args):
         self.popup_message("Цели", "Главная цель: купить таблетку бессмертия.\n\nНужно: 45+ лет, уровень 35+, ум 1000+, известность 700+, бизнес 5+, 10 000 000 ₽.")
 
-    def show_achievements(self, instance=None):
+    def show_achievements(self, *args):
         text = "Пока достижений нет." if not self.achievements else "\n".join(self.achievements)
         self.popup_message("Достижения", text)
 
@@ -952,29 +939,28 @@ class LifeGame(BoxLayout):
             if ok and name not in self.achievements:
                 self.achievements.append(name)
 
-    def show_graveyard_menu(self, instance=None):
-        self.clear()
-        self.add_widget(self.make_label("ВАШИ ИГРЫ", size=30, bold=True, height=56))
-        self.add_widget(self.make_label("Кладбище прожитых жизней", size=16, color=(0.35, 0.42, 0.58, 1), height=32))
-
+    def show_graveyard_menu(self, *args):
+        self.wipe()
+        root = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(10))
+        root.add_widget(self.section_title("ВАШИ ИГРЫ", "Кладбище прожитых жизней"))
         graves = self.load_graveyard()
-        grid = GridLayout(cols=1, spacing=10, size_hint_y=None)
+        grid = GridLayout(cols=1, spacing=dp(10), size_hint_y=None)
         grid.bind(minimum_height=grid.setter("height"))
 
         if not graves:
-            empty = Card(orientation="vertical", padding=18, bg=(1, 1, 1, 1), size_hint_y=None, height=140)
-            empty.add_widget(self.make_label("Пока прошлых жизней нет.", size=18, bold=True))
+            empty = self.card(orientation="vertical", padding=dp(18), bg=(1, 1, 1, 1), radius=24, size_hint_y=None, height=dp(130))
+            empty.add_widget(self.label("Пока прошлых жизней нет.", size=18, bold=True))
             grid.add_widget(empty)
         else:
             for idx, grave in enumerate(reversed(graves[-30:]), 1):
                 title = f"Надгробие {idx}: {grave.get('name', 'Игрок')}, {grave.get('age', 0)} лет"
-                btn = self.make_button(title, lambda x, g=grave: self.show_grave_stats(g), (0.35, 0.36, 0.45, 1), height=70, size=16)
-                grid.add_widget(btn)
+                grid.add_widget(self.btn(title, lambda x, g=grave: self.show_grave_stats(g), (0.35, 0.36, 0.45, 1), height=64, size=14))
 
         scroll = ScrollView()
         scroll.add_widget(grid)
-        self.add_widget(scroll)
-        self.add_widget(self.make_button("Назад в главное меню", self.show_main_menu, (0.20, 0.45, 0.90, 1), height=60))
+        root.add_widget(scroll)
+        root.add_widget(self.btn("Назад", self.show_main_menu, (0.20, 0.45, 0.90, 1), height=56))
+        self.add_widget(root)
 
     def show_grave_stats(self, grave):
         text = (
@@ -990,59 +976,65 @@ class LifeGame(BoxLayout):
         )
         self.popup_message("Статистика жизни", text)
 
-    def show_settings(self, instance=None):
-        self.clear()
-        self.add_widget(self.make_label("НАСТРОЙКИ", size=30, bold=True, height=56))
-        self.add_widget(self.make_label("Параметры игры и будущие онлайн-функции", size=15, color=(0.35, 0.42, 0.58, 1), height=34))
+    def show_settings(self, *args):
+        self.wipe()
+        root = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(10))
+        root.add_widget(self.section_title("НАСТРОЙКИ", "Параметры игры и будущие онлайн-функции"))
 
-        grid = GridLayout(cols=1, spacing=10, size_hint_y=None)
+        grid = GridLayout(cols=1, spacing=dp(10), size_hint_y=None)
         grid.bind(minimum_height=grid.setter("height"))
 
-        def setting_row(title, key, subtitle=""):
-            row = Card(orientation="horizontal", padding=14, spacing=10, bg=(1, 1, 1, 1), size_hint_y=None, height=82)
-            labels = BoxLayout(orientation="vertical")
-            labels.add_widget(self.make_label(title, size=18, bold=True, align="left", height=30))
-            labels.add_widget(self.make_label(subtitle, size=13, color=(0.38, 0.44, 0.56, 1), align="left", height=28))
-            row.add_widget(labels)
-            sw = Switch(active=bool(self.settings.get(key, False)), size_hint_x=None, width=90)
+        def row(title, key, subtitle=""):
+            item = self.card(orientation="horizontal", padding=dp(12), spacing=dp(8), bg=(1, 1, 1, 1), radius=22, size_hint_y=None, height=dp(78))
+            txt = BoxLayout(orientation="vertical")
+            txt.add_widget(self.label(title, size=17, bold=True, align="left", height=28))
+            txt.add_widget(self.label(subtitle, size=12, color=(0.38, 0.44, 0.56, 1), align="left", height=26))
+            item.add_widget(txt)
+            sw = Switch(active=bool(self.settings.get(key, False)), size_hint_x=None, width=dp(86))
             def changed(instance, value):
                 self.settings[key] = bool(value)
                 self.save_settings()
+                if key == "music":
+                    if value:
+                        self.start_music()
+                    else:
+                        self.stop_music()
             sw.bind(active=changed)
-            row.add_widget(sw)
-            return row
+            item.add_widget(sw)
+            return item
 
-        grid.add_widget(setting_row("Звук", "sound", "Звуковые эффекты в игре"))
-        grid.add_widget(setting_row("Вибрация", "vibration", "Отклик при нажатиях"))
-        grid.add_widget(setting_row("Синхронизация", "cloud_sync", "Заготовка под облачные сохранения"))
-        grid.add_widget(setting_row("Google Play Игры", "google_play", "Заготовка под достижения и вход"))
+        grid.add_widget(row("Фоновая музыка", "music", "Музыка в главном меню и игре"))
+        grid.add_widget(row("Звук", "sound", "Звуковые эффекты действий"))
+        grid.add_widget(row("Вибрация", "vibration", "Отклик при нажатиях"))
+        grid.add_widget(row("Синхронизация", "cloud_sync", "Заготовка под облачные сохранения"))
+        grid.add_widget(row("Google Play Игры", "google_play", "Заготовка под достижения и вход"))
 
-        note = Card(orientation="vertical", padding=14, bg=(0.96, 0.98, 1, 1), size_hint_y=None, height=120)
-        note.add_widget(self.make_label("Важно", size=18, bold=True, align="left", height=30))
-        note.add_widget(self.make_label("Google Play синхронизация пока отображается как настройка.\nДля реального входа нужно подключать Google Play Games SDK отдельно.", size=14, align="left", color=(0.35, 0.42, 0.58, 1), height=70))
+        note = self.card(orientation="vertical", padding=dp(12), bg=(0.96, 0.98, 1, 1), radius=22, size_hint_y=None, height=dp(112))
+        note.add_widget(self.label("Google Play", size=16, bold=True, align="left", height=26))
+        note.add_widget(self.label("Сейчас это визуальная настройка. Реальный вход и облако подключаются отдельно через Google Play Games SDK.", size=12, align="left", color=(0.35, 0.42, 0.58, 1), height=66))
         grid.add_widget(note)
 
         scroll = ScrollView()
         scroll.add_widget(grid)
-        self.add_widget(scroll)
-        self.add_widget(self.make_button("Назад в главное меню", self.show_main_menu, (0.20, 0.45, 0.90, 1), height=60))
+        root.add_widget(scroll)
+        root.add_widget(self.btn("Назад", self.show_main_menu, (0.20, 0.45, 0.90, 1), height=56))
+        self.add_widget(root)
 
-    def new_game_popup(self, instance=None):
-        layout = BoxLayout(orientation="vertical", padding=16, spacing=10)
-        layout.add_widget(self.make_label("Создать новую жизнь", size=22, bold=True, height=42))
-        name_input = TextInput(hint_text="Имя персонажа", multiline=False, font_size=18, size_hint_y=None, height=56)
+    def new_game_popup(self, *args):
+        layout = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(10))
+        layout.add_widget(self.label("Создать новую жизнь", size=22, bold=True, height=42))
+        name_input = TextInput(hint_text="Имя персонажа", multiline=False, font_size=dp(18), size_hint_y=None, height=dp(54))
         layout.add_widget(name_input)
-        layout.add_widget(self.make_button("Мужской", lambda x: start("Мужской"), (0.20, 0.48, 0.86, 1)))
-        layout.add_widget(self.make_button("Женский", lambda x: start("Женский"), (0.88, 0.25, 0.48, 1)))
-        layout.add_widget(self.make_button("Случайно", lambda x: start(random.choice(["Мужской", "Женский"])), (0.45, 0.38, 0.78, 1)))
-        layout.add_widget(self.make_button("Отмена", lambda x: popup.dismiss(), (0.45, 0.45, 0.50, 1)))
-
-        popup = Popup(title="", content=layout, size_hint=(0.90, 0.66))
+        popup = Popup(title="", content=layout, size_hint=(0.88, 0.54))
 
         def start(gender):
             popup.dismiss()
             self.new_game(name_input.text.strip(), gender)
 
+        layout.add_widget(self.btn("Мужской", lambda x: start("Мужской"), (0.20, 0.48, 0.86, 1), height=52))
+        layout.add_widget(self.btn("Женский", lambda x: start("Женский"), (0.88, 0.25, 0.48, 1), height=52))
+        layout.add_widget(self.btn("Случайно", lambda x: start(random.choice(["Мужской", "Женский"])), (0.45, 0.38, 0.78, 1), height=52))
+        layout.add_widget(self.btn("Отмена", lambda x: popup.dismiss(), (0.45, 0.45, 0.50, 1), height=52))
         popup.open()
 
     def new_game(self, name="", gender="Мужской"):
@@ -1062,22 +1054,23 @@ class LifeGame(BoxLayout):
         else:
             self.family_status = "Богатая семья"; self.money = random.randint(50000, 200000); self.happiness += 10; self.fame += 5
         self.looks = random.randint(30, 90)
+        self.active_category = "Жизнь"
         self.save_game()
         self.build_game_ui("Ты родился. Начинается новая жизнь.")
 
-    # -----------------------
-    # Save / load
-    # -----------------------
+    # ---------- saving ----------
 
     def save_game(self):
-        data = {k: getattr(self, k) for k in [
+        data = {}
+        for k in [
             "name", "gender", "country", "city", "age", "day", "level", "xp", "money",
             "health", "happiness", "energy", "mind", "looks", "charisma", "discipline",
             "luck", "fame", "family_status", "education", "school_progress", "university_progress",
             "job", "job_level", "job_salary", "business_level", "relationship", "partner_name",
             "love", "child_count", "pet", "home", "home_level", "car", "car_level", "disease",
             "immortal", "game_over", "death_reason", "achievements", "completed_goals", "streak", "last_event"
-        ]}
+        ]:
+            data[k] = getattr(self, k)
         try:
             with open(SAVE_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)

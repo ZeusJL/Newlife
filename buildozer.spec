@@ -4,9 +4,9 @@ package.name = newlife
 package.domain = com.denislife
 
 source.dir = .
-source.include_exts = py,png,jpg,kv,atlas,json
+source.include_exts = py,png,jpg,kv,atlas,json,wav,ogg,mp3
 
-version = 1.1
+version = 1.2
 
 requirements = hostpython3==3.11.6,python3==3.11.6,kivy==2.3.1
 
