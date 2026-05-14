@@ -36,8 +36,7 @@ jobs:
 
       - name: Build APK
         run: |
-          cat buildozer.spec
-          buildozer android clean
+          cat buildozer.spec        
           buildozer -v android debug
 
       - name: Upload APK
