@@ -6,7 +6,7 @@ package.domain = com.denislife
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json
 
-version = 1.0
+version = 1.1
 
 requirements = hostpython3==3.11.6,python3==3.11.6,kivy==2.3.1
 
