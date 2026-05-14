@@ -73,20 +73,26 @@ class Card(BoxLayout):
 
 
 class RButton(Button):
-    def __init__(self, bg=(0.2, 0.45, 0.9, 1), radius=18, **kwargs):
+    def __init__(self, bg=(0.2, 0.45, 0.9, 1), radius=18, fg=(1, 1, 1, 1), **kwargs):
         kwargs.setdefault("background_normal", "")
         kwargs.setdefault("background_down", "")
         kwargs.setdefault("background_color", (0, 0, 0, 0))
-        kwargs.setdefault("color", (1, 1, 1, 1))
+        kwargs.setdefault("color", fg)
         kwargs.setdefault("bold", True)
         kwargs.setdefault("font_size", dp(15))
+        kwargs.setdefault("halign", "center")
+        kwargs.setdefault("valign", "middle")
         super().__init__(**kwargs)
         self.bg = bg
         self.radius = radius
+        self.bind(size=self._sync_text_size)
         with self.canvas.before:
             Color(*self.bg)
             self.rect = RoundedRectangle(radius=[dp(self.radius)])
         self.bind(pos=self._update, size=self._update)
+
+    def _sync_text_size(self, *args):
+        self.text_size = (self.width - dp(10), self.height - dp(6))
 
     def _update(self, *args):
         self.rect.pos = self.pos
@@ -263,8 +269,11 @@ class LifeGame(BoxLayout):
         lab.bind(size=lab.setter("text_size"))
         return lab
 
-    def btn(self, text, callback, bg=(0.2, 0.45, 0.9, 1), h=56, size=15, radius=18):
-        b = RButton(text=text, bg=bg, radius=radius, size_hint_y=None, height=dp(h), font_size=dp(size))
+    def btn(self, text, callback, bg=(0.2, 0.45, 0.9, 1), h=56, size=15, radius=18, fg=None):
+        if fg is None:
+            brightness = (bg[0] * 0.299 + bg[1] * 0.587 + bg[2] * 0.114)
+            fg = (0.07, 0.12, 0.22, 1) if brightness > 0.72 else (1, 1, 1, 1)
+        b = RButton(text=text, bg=bg, fg=fg, radius=radius, size_hint_y=None, height=dp(h), font_size=dp(size))
         b.bind(on_press=callback)
         return b
 
@@ -274,23 +283,14 @@ class LifeGame(BoxLayout):
         return c
 
     def icon_button(self, icon_file, title, subtitle, color, callback):
-        root = RButton(
-            text="",
-            bg=color,
-            radius=18,
-            size_hint_y=None,
-            height=dp(68),
-        )
-        box = BoxLayout(orientation="horizontal", spacing=dp(8), padding=[dp(8), dp(4), dp(8), dp(4)])
-        im = Image(source=asset(icon_file), size_hint_x=None, width=dp(46))
-        box.add_widget(im)
-        texts = BoxLayout(orientation="vertical", spacing=dp(0))
-        texts.add_widget(self.lbl(title, size=14, bold=True, color=(1, 1, 1, 1), h=28, align="left"))
-        texts.add_widget(self.lbl(subtitle, size=10, color=(1, 1, 1, 0.92), h=24, align="left"))
-        box.add_widget(texts)
-        root.add_widget(box)
-        root.bind(on_press=callback)
-        return root
+        icons = {
+            "Жизнь": "●", "Учёба": "◆", "Работа": "■", "Отношения": "♥",
+            "Имущество": "⌂", "Активы": "↗", "Здоровье": "+", "Другое": "••",
+        }
+        text = f"{icons.get(title, '•')} {title}\n[size=10]{subtitle}[/size]"
+        b = self.btn(text, callback, color, h=58, size=13, radius=18, fg=(1, 1, 1, 1))
+        b.markup = True
+        return b
 
     def stat_card(self, title, value, color):
         return self.chip(f"{title}\n{value}", bg=(color[0], color[1], color[2], 0.13), fg=(0.08, 0.12, 0.22, 1), h=52)
@@ -300,35 +300,50 @@ class LifeGame(BoxLayout):
     def show_main_menu(self, *args):
         self.wipe()
         main = BgLayout(bg_source=asset("bg_menu.png"))
-        center = AnchorLayout(anchor_x="center", anchor_y="center", padding=dp(16))
-        content = BoxLayout(orientation="vertical", spacing=dp(12), size_hint=(1, None), height=dp(620))
 
-        content.add_widget(self.lbl("НОВАЯ ЖИЗНЬ", size=34, bold=True, color=(0.08, 0.26, 0.62, 1), h=48))
-        content.add_widget(self.lbl("Твоя история начинается сейчас", size=15, color=(0.24, 0.32, 0.50, 1), h=28))
+        scroll = ScrollView(size_hint=(1, 1))
+        content = BoxLayout(
+            orientation="vertical",
+            spacing=dp(10),
+            size_hint_y=None,
+            padding=[dp(16), dp(24), dp(16), dp(24)]
+        )
+        content.bind(minimum_height=content.setter("height"))
 
-        hero = Card(orientation="horizontal", padding=dp(12), spacing=dp(12), bg=(1, 1, 1, 0.72), radius=30, size_hint_y=None, height=dp(145))
-        hero.add_widget(Image(source=asset("hero.png"), size_hint_x=0.48))
-        hero_text = BoxLayout(orientation="vertical", spacing=dp(4))
-        hero_text.add_widget(self.lbl("Симулятор жизни", size=18, bold=True, h=42))
-        hero_text.add_widget(self.lbl("От рождения до старости.\nКарьера, семья, бизнес,\nсобытия и бессмертие.", size=11, color=(0.16, 0.22, 0.38, 1), h=80))
+        content.add_widget(self.lbl("НОВАЯ ЖИЗНЬ", size=30, bold=True, color=(0.06, 0.25, 0.60, 1), h=42))
+        content.add_widget(self.lbl("Твоя история начинается сейчас", size=14, color=(0.24, 0.32, 0.50, 1), h=25))
+
+        hero = Card(
+            orientation="horizontal",
+            padding=dp(12),
+            spacing=dp(12),
+            bg=(1, 1, 1, 0.88),
+            radius=28,
+            size_hint_y=None,
+            height=dp(120)
+        )
+        hero.add_widget(Image(source=asset("hero.png"), size_hint_x=0.42))
+        hero_text = BoxLayout(orientation="vertical", spacing=dp(2))
+        hero_text.add_widget(self.lbl("Симулятор жизни", size=17, bold=True, h=30, color=(0.07,0.12,0.24,1)))
+        hero_text.add_widget(self.lbl("От рождения до старости.\nКарьера, семья, бизнес,\nсобытия и бессмертие.", size=10, color=(0.16, 0.22, 0.38, 1), h=72))
         hero.add_widget(hero_text)
         content.add_widget(hero)
 
         has_save = os.path.exists(SAVE_FILE)
-        content.add_widget(self.btn("▶  Продолжить игру", self.continue_game, (0.12, 0.48, 0.95, 1) if has_save else (0.62, 0.67, 0.76, 1), h=62, size=17))
-        content.add_widget(self.btn("+  Новая игра", self.new_game_popup, (0.20, 0.68, 0.25, 1), h=62, size=17))
-        content.add_widget(self.btn("▣  Ваши игры", self.show_graveyard_menu, (0.95, 0.58, 0.08, 1), h=62, size=17))
-        content.add_widget(self.btn("⚙  Настройки", self.show_settings, (0.45, 0.32, 0.82, 1), h=62, size=17))
-        content.add_widget(self.btn("⏻  Выйти", self.exit_game, (0.88, 0.24, 0.28, 1), h=62, size=17))
+        buttons = [
+            ("▶  Продолжить игру", self.continue_game, (0.12, 0.48, 0.95, 1) if has_save else (0.63, 0.67, 0.76, 1)),
+            ("+  Новая игра", self.new_game_popup, (0.20, 0.68, 0.25, 1)),
+            ("▣  Ваши игры", self.show_graveyard_menu, (0.95, 0.58, 0.08, 1)),
+            ("⚙  Настройки", self.show_settings, (0.45, 0.32, 0.82, 1)),
+            ("⏻  Выйти", self.exit_game, (0.88, 0.24, 0.28, 1)),
+        ]
+        for text, fn, col in buttons:
+            content.add_widget(self.btn(text, fn, col, h=54, size=16, radius=20))
 
-        foot = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(46))
-        foot.add_widget(self.lbl("★", size=24, color=(0.95, 0.62, 0.08, 1)))
-        foot.add_widget(self.lbl("LifeSim Studio\nВерсия 1.2.0", size=11, color=(0.24, 0.32, 0.50, 1)))
-        foot.add_widget(self.lbl("🏆", size=22, color=(0.25, 0.45, 0.90, 1)))
-        content.add_widget(foot)
+        content.add_widget(self.lbl("LifeSim Studio  •  Версия 1.3.0", size=11, color=(0.24, 0.32, 0.50, 1), h=34))
 
-        center.add_widget(content)
-        main.add_widget(center)
+        scroll.add_widget(content)
+        main.add_widget(scroll)
         self.add_widget(main)
 
     def continue_game(self, *args):
@@ -362,7 +377,7 @@ class LifeGame(BoxLayout):
         title.add_widget(self.lbl("НОВАЯ ЖИЗНЬ", size=18, bold=True, color=(0.08, 0.34, 0.70, 1), h=25))
         title.add_widget(self.lbl("Твоя история начинается сейчас", size=10, color=(0.44, 0.49, 0.63, 1), h=16))
         header.add_widget(title)
-        header.add_widget(self.btn("Магазин", lambda x: self.select_category("Магазин"), (0.12, 0.48, 0.95, 1), h=42, size=12, radius=14))
+        header.add_widget(self.btn("Магазин", lambda x: self.select_category("Магазин"), (0.12, 0.48, 0.95, 1), h=42, size=12, radius=14, fg=(1,1,1,1)))
         screen.add_widget(header)
 
         stats = GridLayout(cols=4, spacing=dp(5), size_hint_y=None, height=dp(40))
@@ -376,7 +391,7 @@ class LifeGame(BoxLayout):
         content = BoxLayout(orientation="vertical", spacing=dp(8), size_hint_y=None)
         content.bind(minimum_height=content.setter("height"))
 
-        profile = Card(orientation="vertical", padding=dp(10), spacing=dp(7), bg=(1,1,1,0.95), radius=26, size_hint_y=None, height=dp(286))
+        profile = Card(orientation="vertical", padding=dp(10), spacing=dp(7), bg=(1,1,1,0.95), radius=26, size_hint_y=None, height=dp(270))
         top = BoxLayout(orientation="horizontal", spacing=dp(10), size_hint_y=None, height=dp(78))
         avatar_src = asset("avatar_girl.png" if self.gender == "Женский" else "avatar_boy.png")
         top.add_widget(Image(source=avatar_src, size_hint_x=None, width=dp(78)))
@@ -415,7 +430,7 @@ class LifeGame(BoxLayout):
         ev.add_widget(self.btn(">", self.quick_next_day, (0.12,0.48,0.95,1), h=50, size=18, radius=16))
         content.add_widget(ev)
 
-        categories = GridLayout(cols=2, spacing=dp(7), size_hint_y=None, height=dp(304))
+        categories = GridLayout(cols=2, spacing=dp(7), size_hint_y=None, height=dp(266))
         data = [
             ("icon_life.png","Жизнь","Повседневные действия",(0.18,0.50,0.95,1)),
             ("icon_study.png","Учёба","Знания и навыки",(0.40,0.25,0.90,1)),
@@ -449,11 +464,21 @@ class LifeGame(BoxLayout):
     def action_panel(self):
         actions = self.get_actions_for(self.active_category)
         rows = min(6, len(actions))
-        panel = Card(orientation="vertical", padding=dp(10), spacing=dp(6), bg=(1,1,1,0.94), radius=24, size_hint_y=None, height=dp(50 + rows*46))
-        panel.add_widget(self.lbl(f"Доступные действия: {self.active_category}", size=16, bold=True, color=(0.08,0.16,0.34,1), h=30))
-        grid = GridLayout(cols=3 if rows <= 3 else 2, spacing=dp(6), size_hint_y=None, height=dp(rows * 46 if rows <= 3 else ((rows+1)//2)*46))
+        grid_rows = 1 if rows <= 3 else 2
+        panel_h = 52 + grid_rows * 48
+        panel = Card(
+            orientation="vertical",
+            padding=dp(10),
+            spacing=dp(8),
+            bg=(1, 1, 1, 0.96),
+            radius=24,
+            size_hint_y=None,
+            height=dp(panel_h)
+        )
+        panel.add_widget(self.lbl(f"Доступные действия: {self.active_category}", size=15, bold=True, color=(0.08,0.16,0.34,1), h=30))
+        grid = GridLayout(cols=3, spacing=dp(6), size_hint_y=None, height=dp(grid_rows * 44))
         for title, fn in actions[:6]:
-            grid.add_widget(self.btn(title, lambda b, f=fn: f(), (0.94,0.97,1,1), h=40, size=10, radius=14))
+            grid.add_widget(self.btn(title, lambda b, f=fn: f(), (0.90, 0.95, 1.0, 1), h=40, size=10, radius=14, fg=(0.08,0.12,0.22,1)))
         panel.add_widget(grid)
         return panel
 
@@ -844,11 +869,20 @@ class LifeGame(BoxLayout):
     # ---------- extra screens ----------
 
     def popup_message(self, title, text):
-        layout = BoxLayout(orientation="vertical", padding=dp(14), spacing=dp(10))
-        layout.add_widget(self.lbl(text, size=14, h=220, color=(0.08,0.12,0.22,1)))
-        close = self.btn("Закрыть", lambda x: popup.dismiss(), (0.12,0.48,0.95,1), h=52)
-        layout.add_widget(close)
-        popup = Popup(title=title, content=layout, size_hint=(0.88,0.50))
+        box = Card(orientation="vertical", padding=dp(16), spacing=dp(12), bg=(1, 1, 1, 0.98), radius=26)
+        box.add_widget(self.lbl(title, size=22, bold=True, color=(0.07,0.12,0.24,1), h=40, align="left"))
+        line = Card(bg=(0.10,0.76,0.92,1), radius=3, size_hint_y=None, height=dp(4))
+        box.add_widget(line)
+        box.add_widget(self.lbl(text, size=14, h=190, color=(0.09,0.14,0.28,1)))
+        close = self.btn("Закрыть", lambda x: popup.dismiss(), (0.12,0.48,0.95,1), h=52, fg=(1,1,1,1))
+        box.add_widget(close)
+        popup = Popup(
+            title="",
+            content=box,
+            size_hint=(0.88, 0.46),
+            background="",
+            background_color=(0, 0, 0, 0)
+        )
         popup.open()
 
     def show_stats(self, *args):
@@ -921,17 +955,17 @@ class LifeGame(BoxLayout):
         bg.add_widget(root); self.add_widget(bg)
 
     def new_game_popup(self,*args):
-        layout=BoxLayout(orientation="vertical",padding=dp(14),spacing=dp(10))
-        layout.add_widget(self.lbl("Создать новую жизнь",size=22,bold=True,h=42))
+        box = Card(orientation="vertical", padding=dp(16), spacing=dp(10), bg=(1,1,1,0.98), radius=26)
+        box.add_widget(self.lbl("Создать новую жизнь",size=22,bold=True,h=40,color=(0.07,0.12,0.24,1)))
         name_input=TextInput(hint_text="Имя персонажа",multiline=False,font_size=dp(18),size_hint_y=None,height=dp(52))
-        layout.add_widget(name_input)
-        popup=Popup(title="",content=layout,size_hint=(0.88,0.52))
+        box.add_widget(name_input)
+        popup=Popup(title="",content=box,size_hint=(0.88,0.50),background="",background_color=(0,0,0,0))
         def start(gender):
             popup.dismiss(); self.new_game(name_input.text.strip(), gender)
-        layout.add_widget(self.btn("Мужской", lambda x:start("Мужской"), (0.12,0.48,0.95,1), h=52))
-        layout.add_widget(self.btn("Женский", lambda x:start("Женский"), (0.88,0.25,0.48,1), h=52))
-        layout.add_widget(self.btn("Случайно", lambda x:start(random.choice(["Мужской","Женский"])), (0.45,0.34,0.82,1), h=52))
-        layout.add_widget(self.btn("Отмена", lambda x:popup.dismiss(), (0.50,0.52,0.60,1), h=52))
+        box.add_widget(self.btn("Мужской", lambda x:start("Мужской"), (0.12,0.48,0.95,1), h=50, fg=(1,1,1,1)))
+        box.add_widget(self.btn("Женский", lambda x:start("Женский"), (0.88,0.25,0.48,1), h=50, fg=(1,1,1,1)))
+        box.add_widget(self.btn("Случайно", lambda x:start(random.choice(["Мужской","Женский"])), (0.45,0.34,0.82,1), h=50, fg=(1,1,1,1)))
+        box.add_widget(self.btn("Отмена", lambda x:popup.dismiss(), (0.86,0.89,0.95,1), h=50, fg=(0.08,0.12,0.22,1)))
         popup.open()
 
     def new_game(self,name="",gender="Мужской"):
